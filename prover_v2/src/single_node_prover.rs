@@ -345,31 +345,76 @@ struct AggJobRequest {
 }
 
 #[cfg(feature = "gpu")]
-fn dispatch_agg_jobs<I>(
+fn compute_agg_capacity(remaining_roots: usize, gpu_capacity: usize) -> usize {
+    if gpu_capacity == 0 {
+        return 0;
+    }
+    if remaining_roots == 0 {
+        return gpu_capacity;
+    }
+    if remaining_roots >= gpu_capacity {
+        cmp::max(1, gpu_capacity / 4).max(1)
+    } else {
+        cmp::max(1, gpu_capacity.saturating_sub(remaining_roots))
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn dispatch_or_queue_jobs<I>(
     dispatcher: &GpuJobDispatcher,
     result_tx: &mpsc::Sender<(u64, anyhow::Result<Vec<u8>>)>,
     jobs: I,
+    queued_jobs: &mut VecDeque<AggJobRequest>,
     pending_gpu_jobs: &mut usize,
+    agg_capacity: usize,
 ) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = AggJobRequest>,
 {
     for job in jobs.into_iter() {
-        tracing::info!(
-            "Dispatching aggregation job {} current_pending={}",
-            job.id,
-            pending_gpu_jobs
-        );
-        dispatcher
-            .submit_agg(job.id, job.ctx, result_tx.clone())
-            .map_err(|e| anyhow!("failed to dispatch aggregation job: {e}"))?;
-        *pending_gpu_jobs += 1;
-        tracing::info!(
-            "Aggregation job {} submitted, pending_gpu_jobs={}",
-            job.id,
-            pending_gpu_jobs
-        );
+        if *pending_gpu_jobs >= agg_capacity {
+            queued_jobs.push_back(job);
+            continue;
+        }
+        submit_agg_job(dispatcher, result_tx, job, pending_gpu_jobs)?;
     }
+    Ok(())
+}
+
+fn flush_queued_jobs(
+    dispatcher: &GpuJobDispatcher,
+    result_tx: &mpsc::Sender<(u64, anyhow::Result<Vec<u8>>)>,
+    queued_jobs: &mut VecDeque<AggJobRequest>,
+    pending_gpu_jobs: &mut usize,
+    agg_capacity: usize,
+) -> anyhow::Result<()> {
+    while *pending_gpu_jobs < agg_capacity {
+        let Some(job) = queued_jobs.pop_front() else { break };
+        submit_agg_job(dispatcher, result_tx, job, pending_gpu_jobs)?;
+    }
+    Ok(())
+}
+
+fn submit_agg_job(
+    dispatcher: &GpuJobDispatcher,
+    result_tx: &mpsc::Sender<(u64, anyhow::Result<Vec<u8>>)>,
+    job: AggJobRequest,
+    pending_gpu_jobs: &mut usize,
+) -> anyhow::Result<()> {
+    tracing::info!(
+        "Dispatching aggregation job {} current_pending={}",
+        job.id,
+        pending_gpu_jobs
+    );
+    dispatcher
+        .submit_agg(job.id, job.ctx, result_tx.clone())
+        .map_err(|e| anyhow!("failed to dispatch aggregation job: {e}"))?;
+    *pending_gpu_jobs += 1;
+    tracing::info!(
+        "Aggregation job {} submitted, pending_gpu_jobs={}",
+        job.id,
+        pending_gpu_jobs
+    );
     Ok(())
 }
 
@@ -415,7 +460,6 @@ fn run_aggregator(
     let mut deferred_processed = false;
 
     let mut queued_jobs = VecDeque::new();
-    let mut allow_agg = false;
 
     let (agg_job_tx, agg_job_rx) = mpsc::channel::<(u64, anyhow::Result<Vec<u8>>)>();
     let mut pending_gpu_jobs = 0usize;
@@ -423,33 +467,24 @@ fn run_aggregator(
     let mut deferred_next_index = chunk_ranges.len();
 
     loop {
+        let remaining = remaining_roots.load(Ordering::Relaxed);
+        let agg_capacity = compute_agg_capacity(remaining, gpu_capacity);
         tracing::debug!(
-            "Aggregator loop state: remaining_roots={} pending_gpu_jobs={} queued_jobs={} next_chunk={} allow_agg={} is_done={}",
-            remaining_roots.load(Ordering::Relaxed),
+            "Aggregator loop state: remaining_roots={} pending_gpu_jobs={} queued_jobs={} next_chunk={} agg_capacity={} is_done={}",
+            remaining,
             pending_gpu_jobs,
             queued_jobs.len(),
             next_chunk_index,
-            allow_agg,
+            agg_capacity,
             aggregator.is_done()
         );
-        if !allow_agg {
-            let current_roots = remaining_roots.load(Ordering::Relaxed);
-            if current_roots <= gpu_capacity {
-                allow_agg = true;
-                tracing::info!(
-                    "Enabling aggregation dispatch: remaining_roots={}, gpu_capacity={}, queued_jobs={}",
-                    current_roots,
-                    gpu_capacity,
-                    queued_jobs.len()
-                );
-                dispatch_agg_jobs(
-                    &dispatcher,
-                    &agg_job_tx,
-                    queued_jobs.drain(..),
-                    &mut pending_gpu_jobs,
-                )?;
-            }
-        }
+        flush_queued_jobs(
+            &dispatcher,
+            &agg_job_tx,
+            &mut queued_jobs,
+            &mut pending_gpu_jobs,
+            agg_capacity,
+        )?;
 
         while let Ok((job_id, result)) = agg_job_rx.try_recv() {
             pending_gpu_jobs = pending_gpu_jobs.saturating_sub(1);
@@ -458,26 +493,40 @@ fn run_aggregator(
                 Err(err) => return Err(err),
             };
             tracing::info!(
-                "Aggregation job {} finished, pending_gpu_jobs={} allow_agg={}",
+                "Aggregation job {} finished, pending_gpu_jobs={}",
                 job_id,
                 pending_gpu_jobs,
-                allow_agg
             );
-            if allow_agg {
-                dispatch_agg_jobs(&dispatcher, &agg_job_tx, followups, &mut pending_gpu_jobs)?;
-            } else {
-                queued_jobs.extend(followups);
-            }
+            let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+            dispatch_or_queue_jobs(
+                &dispatcher,
+                &agg_job_tx,
+                followups,
+                &mut queued_jobs,
+                &mut pending_gpu_jobs,
+                capacity,
+            )?;
+            flush_queued_jobs(
+                &dispatcher,
+                &agg_job_tx,
+                &mut queued_jobs,
+                &mut pending_gpu_jobs,
+                capacity,
+            )?;
         }
 
         if next_chunk_index == chunk_ranges.len() && !deferred_processed {
             for (_, proof) in deferred_inputs.iter() {
                 let jobs = aggregator.push_deferred(proof.clone(), deferred_next_index)?;
-                if allow_agg {
-                    dispatch_agg_jobs(&dispatcher, &agg_job_tx, jobs, &mut pending_gpu_jobs)?;
-                } else {
-                    queued_jobs.extend(jobs);
-                }
+                let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+                dispatch_or_queue_jobs(
+                    &dispatcher,
+                    &agg_job_tx,
+                    jobs,
+                    &mut queued_jobs,
+                    &mut pending_gpu_jobs,
+                    capacity,
+                )?;
                 deferred_next_index += 1;
             }
             deferred_processed = true;
@@ -505,22 +554,25 @@ fn run_aggregator(
                     chunk_proofs.push(proofs.remove(&idx).unwrap());
                 }
                 tracing::info!(
-                    "Scheduling aggregation chunk {} (segments {}-{}) allow_agg={}",
+                    "Scheduling aggregation chunk {} (segments {}-{})",
                     next_chunk_index,
                     start_idx,
-                    end_idx,
-                    allow_agg
+                    end_idx
                 );
                 let jobs = aggregator.push_normal_chunk(
                     chunk_proofs,
                     next_chunk_index == 0,
                     next_chunk_index,
                 )?;
-                if allow_agg {
-                    dispatch_agg_jobs(&dispatcher, &agg_job_tx, jobs, &mut pending_gpu_jobs)?;
-                } else {
-                    queued_jobs.extend(jobs);
-                }
+                let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+                dispatch_or_queue_jobs(
+                    &dispatcher,
+                    &agg_job_tx,
+                    jobs,
+                    &mut queued_jobs,
+                    &mut pending_gpu_jobs,
+                    capacity,
+                )?;
                 next_chunk_index += 1;
                 scheduled_chunk = true;
             } else {
@@ -536,6 +588,15 @@ fn run_aggregator(
                 Ok(Ok((index, proof))) => {
                     proofs.insert(index, proof);
                     remaining_roots.fetch_sub(1, Ordering::Relaxed);
+                    let capacity =
+                        compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+                    flush_queued_jobs(
+                        &dispatcher,
+                        &agg_job_tx,
+                        &mut queued_jobs,
+                        &mut pending_gpu_jobs,
+                        capacity,
+                    )?;
                 }
                 Ok(Err(err)) => return Err(err),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -556,12 +617,29 @@ fn run_aggregator(
                         Err(err) => return Err(err),
                     };
                     tracing::info!(
-                        "Blocking receive completed job {} pending_gpu_jobs={} allow_agg={}",
+                        "Blocking receive completed job {} pending_gpu_jobs={}",
                         job_id,
-                        pending_gpu_jobs,
-                        allow_agg
+                        pending_gpu_jobs
                     );
-                    dispatch_agg_jobs(&dispatcher, &agg_job_tx, followups, &mut pending_gpu_jobs)?;
+                    let capacity = compute_agg_capacity(
+                        remaining_roots.load(Ordering::Relaxed),
+                        gpu_capacity,
+                    );
+                    dispatch_or_queue_jobs(
+                        &dispatcher,
+                        &agg_job_tx,
+                        followups,
+                        &mut queued_jobs,
+                        &mut pending_gpu_jobs,
+                        capacity,
+                    )?;
+                    flush_queued_jobs(
+                        &dispatcher,
+                        &agg_job_tx,
+                        &mut queued_jobs,
+                        &mut pending_gpu_jobs,
+                        capacity,
+                    )?;
                 }
                 Err(_) => {
                     return Err(anyhow!("aggregation job channel closed"));
