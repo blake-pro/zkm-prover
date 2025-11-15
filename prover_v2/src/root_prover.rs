@@ -1,9 +1,7 @@
 use crate::contexts::ProveContext;
-use crate::{get_prover, NetworkProve, ProverComponents, KEY_CACHE, PROGRAM_CACHE};
-use common::file;
+use crate::{checkout_network_prove, get_prover, ProverComponents, KEY_CACHE};
+use std::time::Instant;
 use zkm_core_executor::ExecutionRecord;
-use zkm_core_machine::utils::trace_checkpoint;
-use zkm_prover::CoreSC;
 use zkm_stark::{MachineProver, StarkGenericConfig};
 
 #[cfg(feature = "gpu")]
@@ -54,7 +52,8 @@ impl RootProver {
     ) -> anyhow::Result<Vec<u8>> {
         let segment_index = ctx.index;
         tracing::info!("GPU {idx} starting root proof for segment {segment_index}");
-        let network_prove = NetworkProve::new(ctx.seg_size);
+
+        let network_prove = checkout_network_prove(ctx.seg_size);
         let opts = network_prove.opts.core_opts;
 
         tracing::info!("GPU {idx} segment {segment_index}: record loaded");
@@ -71,9 +70,7 @@ impl RootProver {
         });
         tracing::info!("GPU {idx} setup time: {:?}", now.elapsed());
         let now = std::time::Instant::now();
-        tracing::info!(
-            "GPU {idx} segment {segment_index}: generating dependencies"
-        );
+        tracing::info!("GPU {idx} segment {segment_index}: generating dependencies");
         prover.core_prover.machine().generate_dependencies(
             std::slice::from_mut(&mut record),
             &opts,

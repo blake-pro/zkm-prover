@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
-use zkm_core_executor::{ExecutionRecord, ZKMReduceProof};
+use zkm_core_executor::{ExecutionRecord, ZKMContext, ZKMReduceProof};
 #[cfg(feature = "gpu")]
 use zkm_gpu_prover::MultiGpuProver;
 use zkm_prover::ZKMVerifyingKey;
@@ -381,6 +381,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "gpu")]
 fn flush_queued_jobs(
     dispatcher: &GpuJobDispatcher,
     result_tx: &mpsc::Sender<(u64, anyhow::Result<Vec<u8>>)>,
@@ -389,12 +390,15 @@ fn flush_queued_jobs(
     agg_capacity: usize,
 ) -> anyhow::Result<()> {
     while *pending_gpu_jobs < agg_capacity {
-        let Some(job) = queued_jobs.pop_front() else { break };
+        let Some(job) = queued_jobs.pop_front() else {
+            break;
+        };
         submit_agg_job(dispatcher, result_tx, job, pending_gpu_jobs)?;
     }
     Ok(())
 }
 
+#[cfg(feature = "gpu")]
 fn submit_agg_job(
     dispatcher: &GpuJobDispatcher,
     result_tx: &mpsc::Sender<(u64, anyhow::Result<Vec<u8>>)>,
@@ -497,7 +501,8 @@ fn run_aggregator(
                 job_id,
                 pending_gpu_jobs,
             );
-            let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+            let capacity =
+                compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
             dispatch_or_queue_jobs(
                 &dispatcher,
                 &agg_job_tx,
@@ -518,7 +523,8 @@ fn run_aggregator(
         if next_chunk_index == chunk_ranges.len() && !deferred_processed {
             for (_, proof) in deferred_inputs.iter() {
                 let jobs = aggregator.push_deferred(proof.clone(), deferred_next_index)?;
-                let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+                let capacity =
+                    compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
                 dispatch_or_queue_jobs(
                     &dispatcher,
                     &agg_job_tx,
@@ -564,7 +570,8 @@ fn run_aggregator(
                     next_chunk_index == 0,
                     next_chunk_index,
                 )?;
-                let capacity = compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
+                let capacity =
+                    compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
                 dispatch_or_queue_jobs(
                     &dispatcher,
                     &agg_job_tx,
@@ -621,10 +628,8 @@ fn run_aggregator(
                         job_id,
                         pending_gpu_jobs
                     );
-                    let capacity = compute_agg_capacity(
-                        remaining_roots.load(Ordering::Relaxed),
-                        gpu_capacity,
-                    );
+                    let capacity =
+                        compute_agg_capacity(remaining_roots.load(Ordering::Relaxed), gpu_capacity);
                     dispatch_or_queue_jobs(
                         &dispatcher,
                         &agg_job_tx,
@@ -846,7 +851,8 @@ impl SingleNodeProver {
         let prover = get_prover();
         let mut network_prove = NetworkProve::new(ctx.seg_size);
         let opts = network_prove.opts;
-        let context = network_prove.context_builder.build();
+        let mut context_builder = ZKMContext::builder();
+        let context = context_builder.build();
 
         let elf_path = ctx.elf_path.clone();
         let elf = file::new(&elf_path).read()?;
@@ -949,6 +955,6 @@ static LOCAL_PROVERS: OnceLock<Arc<MultiGpuProver>> = OnceLock::new();
 #[cfg(feature = "gpu")]
 pub fn get_local_provers() -> Arc<MultiGpuProver> {
     LOCAL_PROVERS
-        .get_or_init(|| Arc::new(MultiGpuProver::autodetect().unwrap()))
+        .get_or_init(|| Arc::new(MultiGpuProver::autodetect(Some(16)).unwrap()))
         .clone()
 }

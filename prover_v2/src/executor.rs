@@ -29,8 +29,7 @@ use zkm_stark::{
 
 pub use crate::contexts::SplitContext;
 use crate::{
-    get_prover, NetworkProve, ProverComponents, FIRST_LAYER_BATCH_SIZE, KEY_CACHE, PROGRAM_CACHE,
-    VK_CACHE,
+    checkout_network_prove, get_prover, FIRST_LAYER_BATCH_SIZE, KEY_CACHE, PROGRAM_CACHE, VK_CACHE,
 };
 
 pub trait SegmentSink: Send + Sync {
@@ -134,7 +133,7 @@ pub struct Executor {}
 impl Executor {
     pub fn split(&self, ctx: &SplitContext) -> anyhow::Result<(u64, u32)> {
         let prover = get_prover();
-        let mut network_prove = NetworkProve::new(ctx.seg_size);
+        let mut network_prove = checkout_network_prove(ctx.seg_size);
 
         let inputs_data: Vec<Vec<u8>> = if !ctx.private_inputs.is_empty() {
             ctx.private_inputs.clone()
@@ -193,7 +192,8 @@ impl Executor {
         let vk_bytes = bincode::serialize(&vk)?;
         file::new(&format!("{}/vk.bin", ctx.base_dir)).write_all(&vk_bytes)?;
 
-        let context = network_prove.context_builder.build();
+        let mut context_builder = ZKMContext::builder();
+        let context = context_builder.build();
         let segment_sink = FileSegmentSink::new(&ctx.seg_path);
         let (total_steps, total_segments, public_values_stream) = self.split_with_context(
             &prover,
@@ -222,7 +222,7 @@ impl Executor {
         // To prevent the executor from occupying a GPU exclusively,
         // the prover used here doesn’t use GPU resources.
         let prover = get_executor();
-        let mut network_prove = NetworkProve::new(ctx.seg_size);
+        let mut network_prove = checkout_network_prove(ctx.seg_size);
 
         let inputs_data: Vec<Vec<u8>> = if !ctx.private_inputs.is_empty() {
             ctx.private_inputs.clone()
@@ -284,7 +284,8 @@ impl Executor {
         };
         let vk_bytes = bincode::serialize(&vk)?;
 
-        let context = network_prove.context_builder.build();
+        let mut context_builder = ZKMContext::builder();
+        let context = context_builder.build();
         let segment_sink = Arc::new(ChannelSegmentSink::new(sender));
         let (total_steps, total_segments, public_values_stream) = self.split_with_context(
             &prover,

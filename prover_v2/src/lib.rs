@@ -1,11 +1,12 @@
 use lru::LruCache;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use zkm_core_executor::{ExecutionRecord, ExecutionState, Program, ZKMContextBuilder};
+use zkm_core_executor::Program;
 use zkm_core_machine::io::ZKMStdin;
 #[cfg(feature = "gpu")]
 use zkm_gpu_core::{
@@ -16,7 +17,7 @@ use zkm_gpu_core::{
 use zkm_prover::{CoreSC, OuterSC, ZKMProver};
 #[cfg(not(feature = "gpu"))]
 use zkm_stark::StarkProvingKey;
-use zkm_stark::{PublicValues, StarkVerifyingKey, ZKMProverOpts};
+use zkm_stark::{StarkVerifyingKey, ZKMProverOpts};
 
 pub use zkm_sdk;
 
@@ -33,17 +34,15 @@ pub mod single_node_prover;
 
 pub const FIRST_LAYER_BATCH_SIZE: usize = 1;
 
-pub struct NetworkProve<'a> {
-    pub context_builder: ZKMContextBuilder<'a>,
+pub struct NetworkProve {
     pub stdin: ZKMStdin,
     pub opts: ZKMProverOpts,
     pub timeout: Option<Duration>,
 }
 
-impl Default for NetworkProve<'_> {
+impl Default for NetworkProve {
     fn default() -> Self {
         Self {
-            context_builder: ZKMContextBuilder::default(),
             stdin: ZKMStdin::default(),
             #[cfg(not(feature = "gpu"))]
             opts: ZKMProverOpts::default(),
@@ -54,7 +53,7 @@ impl Default for NetworkProve<'_> {
     }
 }
 
-impl NetworkProve<'_> {
+impl NetworkProve {
     pub fn new(shard_size: u32) -> Self {
         if shard_size > 0 {
             std::env::set_var("SHARD_SIZE", shard_size.to_string());
@@ -73,6 +72,108 @@ impl NetworkProve<'_> {
         }
 
         prove
+    }
+}
+
+struct CachedNetworkProve {
+    stdin: ZKMStdin,
+    opts: ZKMProverOpts,
+    timeout: Option<Duration>,
+}
+
+impl CachedNetworkProve {
+    fn new(seg_size: u32) -> Self {
+        Self::from(NetworkProve::new(seg_size))
+    }
+
+    fn into_network_prove(self) -> NetworkProve {
+        NetworkProve {
+            stdin: self.stdin,
+            opts: self.opts,
+            timeout: self.timeout,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.stdin = ZKMStdin::default();
+        self.timeout = None;
+    }
+}
+
+impl From<NetworkProve> for CachedNetworkProve {
+    fn from(prove: NetworkProve) -> Self {
+        Self {
+            stdin: prove.stdin,
+            opts: prove.opts,
+            timeout: prove.timeout,
+        }
+    }
+}
+
+pub struct NetworkProvePool {
+    pools: Mutex<HashMap<u32, Vec<CachedNetworkProve>>>,
+}
+
+impl NetworkProvePool {
+    pub fn new() -> Self {
+        Self {
+            pools: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn checkout(&self, seg_size: u32) -> NetworkProveGuard<'_> {
+        let state = {
+            let mut pools = self.pools.lock();
+            pools
+                .entry(seg_size)
+                .or_default()
+                .pop()
+                .unwrap_or_else(|| CachedNetworkProve::new(seg_size))
+        };
+        NetworkProveGuard {
+            cache: self,
+            seg_size,
+            prove: Some(state.into_network_prove()),
+        }
+    }
+
+    fn release(&self, seg_size: u32, prove: NetworkProve) {
+        let mut state = CachedNetworkProve::from(prove);
+        state.reset();
+        let mut pools = self.pools.lock();
+        pools.entry(seg_size).or_default().push(state);
+    }
+}
+
+pub struct NetworkProveGuard<'a> {
+    cache: &'a NetworkProvePool,
+    seg_size: u32,
+    prove: Option<NetworkProve>,
+}
+
+impl<'a> Deref for NetworkProveGuard<'a> {
+    type Target = NetworkProve;
+
+    fn deref(&self) -> &Self::Target {
+        self.prove
+            .as_ref()
+            .expect("NetworkProveGuard should always hold a value")
+    }
+}
+
+impl<'a> DerefMut for NetworkProveGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.prove
+            .as_mut()
+            .expect("NetworkProveGuard should always hold a value")
+    }
+}
+
+impl<'a> Drop for NetworkProveGuard<'a> {
+    fn drop(&mut self) {
+        if let Some(prove) = self.prove.take() {
+            self.cache.release(self.seg_size, prove);
+        }
     }
 }
 
@@ -207,4 +308,13 @@ lazy_static::lazy_static! {
         Mutex::new(ProgramCache::new(DEFAULT_CACHE_SIZE * 8));
     pub static ref VK_CACHE: Mutex<VkCache> =
         Mutex::new(VkCache::new(DEFAULT_CACHE_SIZE));
+    pub static ref NETWORK_PROVE_POOL: NetworkProvePool = NetworkProvePool::new();
+}
+
+pub fn checkout_network_prove(seg_size: u32) -> NetworkProveGuard<'static> {
+    NETWORK_PROVE_POOL.checkout(seg_size)
+}
+
+pub fn checkout_default_network_prove() -> NetworkProveGuard<'static> {
+    NETWORK_PROVE_POOL.checkout(0)
 }

@@ -1,5 +1,5 @@
 use crate::contexts::AggContext;
-use crate::{get_prover, NetworkProve, ProverComponents};
+use crate::{checkout_default_network_prove, get_prover, ProverComponents};
 use zkm_core_executor::ZKMReduceProof;
 use zkm_prover::build::Witnessable;
 use zkm_prover::{InnerSC, ZKMCircuitWitness, ZKMProver, ZKMRecursionProverError};
@@ -40,7 +40,7 @@ impl AggProver {
             ctx.proofs.len(),
             ctx.is_first_shard
         );
-        let network_prove = NetworkProve::default();
+        let network_prove = checkout_default_network_prove();
         let input = if ctx.is_leaf_layer {
             if !ctx.is_deferred {
                 tracing::info!("GPU {idx} Aggregation job building core witness");
