@@ -1,7 +1,7 @@
 use common::file;
 use std::borrow::Borrow;
 use std::fs::File;
-use std::io::{self, Seek, Write};
+use std::io::Write;
 use std::sync::{
     mpsc::sync_channel,
     OnceLock, {Arc, Mutex},
@@ -87,13 +87,13 @@ impl<'a> SegmentSink for FileSegmentSink<'a> {
 }
 
 pub struct ChannelSegmentSink {
-    sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>,
+    sender: crossbeam_channel::Sender<(usize, Arc<ExecutionRecord>)>,
     total_segments: Mutex<usize>,
     deferred: Mutex<Vec<(usize, Vec<u8>)>>,
 }
 
 impl ChannelSegmentSink {
-    pub fn new(sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>) -> Self {
+    pub fn new(sender: crossbeam_channel::Sender<(usize, Arc<ExecutionRecord>)>) -> Self {
         Self {
             sender,
             total_segments: Mutex::new(0),
@@ -217,7 +217,7 @@ impl Executor {
     pub fn split_streaming(
         &self,
         ctx: &SplitContext,
-        sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>,
+        sender: crossbeam_channel::Sender<(usize, Arc<ExecutionRecord>)>,
     ) -> anyhow::Result<(u64, u32, Vec<u8>, Vec<(usize, Vec<u8>)>, Vec<u8>)> {
         // To prevent the executor from occupying a GPU exclusively,
         // the prover used here doesn’t use GPU resources.

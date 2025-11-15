@@ -705,7 +705,8 @@ impl SingleNodeProver {
         };
         let gpu_dispatcher_main = gpu_pool.dispatcher();
         let remaining_roots = Arc::new(AtomicUsize::new(0));
-        let (segment_tx, segment_rx) = mpsc::channel::<(usize, Arc<ExecutionRecord>)>();
+        let (segment_tx, segment_rx) =
+            crossbeam_channel::bounded::<(usize, Arc<ExecutionRecord>)>(256);
         let (proof_tx, proof_rx) = mpsc::channel::<anyhow::Result<(usize, Vec<u8>)>>();
         let (config_tx, config_rx) = mpsc::channel::<AggregatorConfig>();
         let (agg_result_tx, agg_result_rx) = mpsc::channel::<anyhow::Result<Vec<u8>>>();
