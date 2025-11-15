@@ -5,11 +5,12 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{anyhow, Context};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
+use zkm_core_executor::ExecutionRecord;
 use zkm_gpu_core::cuda_runtime;
 
 use crate::agg_prover::AggProver;
-use crate::contexts::{AggContext, ProveContext};
-use crate::root_prover::RootProver;
+use crate::contexts::AggContext;
+use crate::root_prover::{PreparedRootJob, RootProver};
 use zkm_gpu_prover::{GpuProverHandle, MultiGpuProver};
 
 /// A clonable dispatcher for submitting GPU jobs.
@@ -24,10 +25,7 @@ struct GpuJobInner {
 }
 
 enum JobMessage {
-    Root {
-        ctx: ProveContext,
-        result_tx: mpsc::Sender<anyhow::Result<(usize, Vec<u8>)>>,
-    },
+    Root(PreparedRootJob),
     Agg {
         job_id: u64,
         ctx: AggContext,
@@ -37,14 +35,10 @@ enum JobMessage {
 }
 
 impl GpuJobDispatcher {
-    pub fn submit_root(
-        &self,
-        ctx: ProveContext,
-        result_tx: mpsc::Sender<anyhow::Result<(usize, Vec<u8>)>>,
-    ) -> anyhow::Result<()> {
+    pub fn submit_root(&self, job: PreparedRootJob) -> anyhow::Result<()> {
         self.inner
             .root_tx
-            .send(JobMessage::Root { ctx, result_tx })
+            .send(JobMessage::Root(job))
             .map_err(|e| anyhow!("failed to dispatch root job: {e}"))
     }
 
@@ -165,11 +159,17 @@ fn worker_loop(
         let Some(job) = job else { return };
 
         match job {
-            JobMessage::Root { ctx, result_tx } => {
+            JobMessage::Root(job) => {
                 tracing::info!("GPU {idx} processing root job");
+                let PreparedRootJob {
+                    ctx,
+                    record,
+                    result_tx,
+                } = job;
+                let segment_index = ctx.index;
                 let res = root_prover
-                    .prove_with_gpu_handle(idx, &handle, &ctx)
-                    .map(|proof| (ctx.index, proof));
+                    .prove_prepared_with_gpu_handle(idx, &handle, &ctx, record)
+                    .map(|proof| (segment_index, proof));
                 let _ = result_tx.send(res);
             }
             JobMessage::Agg {

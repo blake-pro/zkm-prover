@@ -7,6 +7,7 @@ use crate::contexts::{AggContext, ProveContext, SingleNodeContext, SnarkContext,
 use crate::executor::Executor;
 #[cfg(feature = "gpu")]
 use crate::gpu_scheduler::{GpuJobDispatcher, GpuJobPool};
+use crate::root_prover::PreparedRootJob;
 use crate::snark_prover::SnarkProver;
 use crate::{get_prover, NetworkProve, FIRST_LAYER_BATCH_SIZE, KEY_CACHE, PROGRAM_CACHE};
 use anyhow::{anyhow, Context};
@@ -777,20 +778,31 @@ impl SingleNodeProver {
             seg_size: ctx.seg_size,
             ..Default::default()
         };
-        let proof_sender_for_root = proof_tx.clone();
-        let remaining_for_root = Arc::clone(&remaining_roots);
-        let segment_handle = std::thread::spawn(move || -> anyhow::Result<()> {
-            let template = worker_ctx;
-            while let Ok((index, record)) = segment_rx.recv() {
-                let mut ctx = template.clone();
-                ctx.index = index;
-                ctx.segment_bytes.clear();
-                ctx.segment_obj = Some(record);
-                remaining_for_root.fetch_add(1, Ordering::Relaxed);
-                dispatcher_for_root.submit_root(ctx, proof_sender_for_root.clone())?;
-            }
-            Ok(())
-        });
+        let mut segment_workers = Vec::with_capacity(gpu_worker_count);
+        for _ in 0..gpu_worker_count {
+            let receiver = segment_rx.clone();
+            let dispatcher = dispatcher_for_root.clone();
+            let proof_sender = proof_tx.clone();
+            let remaining_for_root = Arc::clone(&remaining_roots);
+            let template = worker_ctx.clone();
+            segment_workers.push(std::thread::spawn(move || -> anyhow::Result<()> {
+                while let Ok((index, record)) = receiver.recv() {
+                    let mut ctx = template.clone();
+                    ctx.index = index;
+                    ctx.segment_bytes.clear();
+                    ctx.segment_obj = None;
+                    let owned_record = Arc::try_unwrap(record).unwrap_or_else(|arc| (*arc).clone());
+                    let job = PreparedRootJob {
+                        ctx,
+                        record: owned_record,
+                        result_tx: proof_sender.clone(),
+                    };
+                    dispatcher.submit_root(job)?;
+                    remaining_for_root.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(())
+            }));
+        }
 
         let executor = Executor::default();
         let (total_steps, total_segments, _public_values, deferred_inputs, vk_bytes) =
@@ -805,10 +817,14 @@ impl SingleNodeProver {
             .map_err(|_| anyhow!("aggregator dropped config receiver"))?;
         drop(config_tx);
 
-        match segment_handle.join() {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(join_err) => return Err(anyhow!("segment dispatcher panicked: {:?}", join_err)),
+        for handle in segment_workers {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(e),
+                Err(join_err) => {
+                    return Err(anyhow!("segment dispatcher panicked: {:?}", join_err))
+                }
+            }
         }
         drop(proof_tx);
 

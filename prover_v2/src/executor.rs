@@ -113,6 +113,7 @@ impl ChannelSegmentSink {
 impl SegmentSink for ChannelSegmentSink {
     fn on_segments(&self, base_index: usize, segments: Vec<ExecutionRecord>) {
         for (offset, record) in segments.into_iter().enumerate() {
+            tracing::info!("send segment {}", base_index + offset);
             self.sender
                 .send((base_index + offset, Arc::new(record)))
                 .expect("segment receiver dropped");

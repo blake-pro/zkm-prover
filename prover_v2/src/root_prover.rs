@@ -1,6 +1,6 @@
 use crate::contexts::ProveContext;
 use crate::{checkout_network_prove, get_prover, ProverComponents, KEY_CACHE};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use zkm_core_executor::ExecutionRecord;
 use zkm_stark::{MachineProver, StarkGenericConfig};
 
@@ -16,6 +16,12 @@ use zkm_prover::ZKMProver;
 
 #[derive(Default)]
 pub struct RootProver {}
+
+pub struct PreparedRootJob {
+    pub ctx: ProveContext,
+    pub record: ExecutionRecord,
+    pub result_tx: mpsc::Sender<anyhow::Result<(usize, Vec<u8>)>>,
+}
 
 impl RootProver {
     pub fn prove(&self, ctx: &ProveContext) -> anyhow::Result<Vec<u8>> {
@@ -121,6 +127,20 @@ impl RootProver {
             .with_prover(|prover| self.prove_with_prover(idx, prover, ctx, segment))
             .map_err(|err| anyhow::anyhow!("failed to execute root proof on GPU: {err}"))??;
 
+        Ok(proof)
+    }
+
+    #[cfg(feature = "gpu")]
+    pub fn prove_prepared_with_gpu_handle(
+        &self,
+        idx: usize,
+        handle: &GpuProverHandle,
+        ctx: &ProveContext,
+        record: ExecutionRecord,
+    ) -> anyhow::Result<Vec<u8>> {
+        let proof = handle
+            .with_prover(|prover| self.prove_with_prover(idx, prover, ctx, record))
+            .map_err(|err| anyhow::anyhow!("failed to execute root proof on GPU: {err}"))??;
         Ok(proof)
     }
 
