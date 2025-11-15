@@ -87,13 +87,13 @@ impl<'a> SegmentSink for FileSegmentSink<'a> {
 }
 
 pub struct ChannelSegmentSink {
-    sender: std::sync::mpsc::Sender<(usize, ExecutionRecord)>,
+    sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>,
     total_segments: Mutex<usize>,
     deferred: Mutex<Vec<(usize, Vec<u8>)>>,
 }
 
 impl ChannelSegmentSink {
-    pub fn new(sender: std::sync::mpsc::Sender<(usize, ExecutionRecord)>) -> Self {
+    pub fn new(sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>) -> Self {
         Self {
             sender,
             total_segments: Mutex::new(0),
@@ -114,7 +114,7 @@ impl SegmentSink for ChannelSegmentSink {
     fn on_segments(&self, base_index: usize, segments: Vec<ExecutionRecord>) {
         for (offset, record) in segments.into_iter().enumerate() {
             self.sender
-                .send((base_index + offset, record))
+                .send((base_index + offset, Arc::new(record)))
                 .expect("segment receiver dropped");
         }
     }
@@ -217,7 +217,7 @@ impl Executor {
     pub fn split_streaming(
         &self,
         ctx: &SplitContext,
-        sender: std::sync::mpsc::Sender<(usize, ExecutionRecord)>,
+        sender: std::sync::mpsc::Sender<(usize, Arc<ExecutionRecord>)>,
     ) -> anyhow::Result<(u64, u32, Vec<u8>, Vec<(usize, Vec<u8>)>, Vec<u8>)> {
         // To prevent the executor from occupying a GPU exclusively,
         // the prover used here doesn’t use GPU resources.
@@ -345,7 +345,7 @@ impl Executor {
             // Spawn the checkpoint generator thread.
             let checkpoint_generator_span = tracing::Span::current().clone();
             let (checkpoints_tx, checkpoints_rx) =
-                sync_channel::<(usize, File, bool)>(opts.checkpoints_channel_capacity);
+                sync_channel::<(usize, ExecutionState, bool)>(opts.checkpoints_channel_capacity);
             let checkpoint_generator_handle: ScopedJoinHandle<Result<_, ZKMCoreProverError>> = s
                 .spawn(move || {
                     let _span = checkpoint_generator_span.enter();
@@ -362,19 +362,8 @@ impl Executor {
                                 .execute_state(false)
                                 .map_err(ZKMCoreProverError::ExecutionError)?;
 
-                            let serialized = bincode::serialize(&checkpoint)
-                                .expect("Failed to serialize checkpoint");
-                            tracing::info!("Checkpoint size: {} bytes", serialized.len());
-
-                            // Save the checkpoint to a temp file.
-                            let mut checkpoint_file =
-                                tempfile::tempfile().map_err(ZKMCoreProverError::IoError)?;
-                            checkpoint
-                                .save(&mut checkpoint_file)
-                                .map_err(ZKMCoreProverError::IoError)?;
-
                             // Send the checkpoint.
-                            checkpoints_tx.send((index, checkpoint_file, done)).unwrap();
+                            checkpoints_tx.send((index, checkpoint, done)).unwrap();
 
                             // If we've reached the final checkpoint, break out of the loop.
                             if done {
@@ -414,18 +403,13 @@ impl Executor {
                         loop {
                             // Receive the latest checkpoint.
                             let received = { checkpoints_rx.lock().unwrap().recv() };
-                            if let Ok((index, mut checkpoint, done)) = received {
-                                // Trace the checkpoint and reconstruct the execution records.
+                            if let Ok((index, checkpoint, done)) = received {
                                 let now = Instant::now();
-                                let mut reader = std::io::BufReader::new(&checkpoint);
-                                let exe_state: ExecutionState =
-                                    bincode::deserialize_from(&mut reader)
-                                        .expect("failed to deserialize state");
                                 let (mut records, report) =
                                     tracing::debug_span!("trace checkpoint").in_scope(|| {
                                         trace_checkpoint::<CoreSC>(
                                             program.clone(),
-                                            exe_state.clone(),
+                                            checkpoint,
                                             opts,
                                             shape_config,
                                         )
@@ -435,12 +419,7 @@ impl Executor {
                                     records.len(),
                                     now.elapsed()
                                 );
-                                // debug_assert_eq!(records.len(), 1);
                                 *report_aggregate.lock().unwrap() += report;
-                                // reset_seek(&mut checkpoint);
-                                checkpoint
-                                    .seek(io::SeekFrom::Start(0))
-                                    .expect("failed to seek to start of tempfile");
 
                                 // Wait for our turn to update the state.
                                 record_gen_sync.wait_for_turn(index);

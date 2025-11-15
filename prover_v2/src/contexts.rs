@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use zkm_core_executor::ExecutionRecord;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -71,7 +72,7 @@ pub struct ProveContext {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub segment_bytes: Vec<u8>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub segment_obj: Option<ExecutionRecord>,
+    pub segment_obj: Option<Arc<ExecutionRecord>>,
     pub seg_size: u32,
     // pub receipts_input: Vec<Vec<u8>>,
 }

@@ -1,6 +1,6 @@
 use crate::contexts::ProveContext;
 use crate::{checkout_network_prove, get_prover, ProverComponents, KEY_CACHE};
-use std::time::Instant;
+use std::sync::Arc;
 use zkm_core_executor::ExecutionRecord;
 use zkm_stark::{MachineProver, StarkGenericConfig};
 
@@ -35,7 +35,10 @@ impl RootProver {
 
     fn prepare_segment(ctx: &ProveContext) -> anyhow::Result<ExecutionRecord> {
         if let Some(segment) = ctx.segment_obj.clone() {
-            Ok(segment)
+            match Arc::try_unwrap(segment) {
+                Ok(record) => Ok(record),
+                Err(arc) => Ok((*arc).clone()),
+            }
         } else if !ctx.segment_bytes.is_empty() {
             Self::decode_record(&ctx.segment_bytes)
         } else {

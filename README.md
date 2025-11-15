@@ -8,8 +8,8 @@ A parallel proving service for [ZKM](https://github.com/ProjectZKM/zkm).
 graph TD
     Init --> Split;
     Split --> Prove;
-    Prove --prove_tasks--> Agg;
-    Prove --composite_proof?--> End;
+    Prove -- prove_tasks --> Agg;
+    Prove -- composite_proof? --> End;
     Agg --> Snark;
     Snark --> End;
 ```
@@ -142,3 +142,53 @@ export RUST_LOG=info; nohup ./target/release/proof-service --stage --config ./pr
 [x] - Stage Checkpoint
 [  ] - Task Checkpoint
 [  ] - Task Scheduler
+
+graph TD
+subgraph Main Thread
+A[开始 prove_in_process] --> B{创建所有 Channels};
+B --> C{启动 SNARK 线程 (并发)};
+C --> D{启动 Aggregator 线程 (并发)};
+D --> E{启动 Root Prover 线程池 (并发)};
+E --> F[执行 Split (阻塞, 计算密集)];
+F -- Segment (usize, Vec<u8>) --> G[segment_tx];
+F -- AggregatorConfig --> H[config_tx];
+F --> I[等待所有 Root Prover 线程结束 (阻塞)];
+I --> J[等待 Aggregator 结果 (阻塞)];
+J --> K[等待 SNARK 结果 (阻塞)];
+K --> L[完成, 返回最终证明];
+end
+
+    subgraph Root Prover Threads (Worker Pool)
+        M[循环等待] -- 阻塞 --> N(segment_rx);
+        N -- 获取 Segment --> O[执行 root_prover.prove() (阻塞, 计算密集)];
+        O -- Segment Proof (usize, Vec<u8>) --> P[proof_tx];
+        P --> M;
+    end
+
+    subgraph Aggregator Thread
+        Q[等待 Config] -- 阻塞 --> R(config_rx);
+        R -- 获取 Config --> S[循环等待];
+        S -- 阻塞 --> T(proof_rx);
+        T -- 获取 Segment Proof --> U{收集满一个批次?};
+        U -- 是 --> V[执行 Aggregation (阻塞, 计算密集)];
+        V --> S;
+        U -- 否 --> S;
+        T -- 所有 Proofs 已接收 --> W{完成所有层聚合?};
+        W -- 是 --> X[发送最终聚合证明];
+        X -- Aggregated Proof --> Y(snark_tx);
+        X -- Result<Proof> --> Z(agg_result_tx);
+    end
+
+    subgraph SNARK Thread (Optional)
+        AA[等待聚合证明] -- 阻塞 --> BB(snark_rx);
+        BB -- 获取聚合证明 --> CC[执行 SNARK Prove (阻塞, 极度计算密集)];
+        CC -- 最终 SNARK 证明 --> DD[通过 Thread JoinHandle 返回];
+    end
+
+    %% Data Flow
+    G --> N;
+    H --> R;
+    P --> T;
+    Y --> BB;
+    Z --> J;
+    DD --> K;
