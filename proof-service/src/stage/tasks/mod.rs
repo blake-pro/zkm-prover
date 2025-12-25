@@ -6,6 +6,8 @@ pub const TASK_STATE_FAILED: u32 = 4;
 
 pub const TASK_TIMEOUT: u64 = 7200;
 
+pub const PROVE_RPC_TIMEOUT_SECS: u64 = 180;
+
 pub mod split_task;
 
 use serde_derive::{Deserialize, Serialize};

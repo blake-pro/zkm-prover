@@ -1,7 +1,7 @@
 use crate::proto::includes::v1::{Program, ProverVersion, Step};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 //use zkm_emulator::utils::get_block_path;
-use crate::stage::{/*read_block_data, */ safe_read};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GenerateTask {
     pub program_id: String,
@@ -27,53 +27,55 @@ pub struct GenerateTask {
     pub receipt_inputs_path: String,
     pub receipts_path: String,
     #[serde(skip_serializing, skip_deserializing)]
-    pub program: Option<Program>,
+    pub program: Option<Arc<Program>>,
 }
 
 impl GenerateTask {
     // load the segement from file_no
-    pub fn gen_program(&self) -> Program {
-        if self.program.is_some() {
-            self.program.clone().unwrap()
-        } else {
-            let block_data = if let Some(block_no) = self.block_no {
-                //let block_path = get_block_path(&self.base_dir, &block_no.to_string(), "");
-                //read_block_data(block_no, &block_path)
-                // FIXME
-                if block_no > 0 {
-                    todo!()
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            };
-
-            let receipts = if !self.receipt_inputs_path.is_empty() {
-                let data = common::file::new(&self.receipt_inputs_path)
-                    .read()
-                    .expect("read receipt_inputs_stream failed");
-                bincode::deserialize::<Vec<Vec<u8>>>(&data)
-                    .expect("deserialize receipt_inputs_stream failed")
-            } else {
-                vec![]
-            };
-
-            Program {
-                version: self.version.into(),
-                seg_size: self.seg_size,
-                elf_path: self.elf_path.clone(),
-                block_no: self.block_no,
-                block_data,
-                public_input_stream: safe_read(&self.public_input_path),
-                private_input_stream: safe_read(&self.private_input_path),
-                target_step: self.target_step.into(),
-                composite_proof: self.composite_proof,
-                proof_id: self.proof_id.clone(),
-                receipts,
-                output_stream: safe_read(&self.output_stream_path),
-            }
+    pub fn gen_program(&mut self) -> Arc<Program> {
+        if let Some(program) = &self.program {
+            return program.clone();
         }
+
+        let block_data = if let Some(block_no) = self.block_no {
+            //let block_path = get_block_path(&self.base_dir, &block_no.to_string(), "");
+            //read_block_data(block_no, &block_path)
+            // FIXME
+            if block_no > 0 {
+                todo!()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        let receipts = if !self.receipt_inputs_path.is_empty() {
+            let data = common::file::new(&self.receipt_inputs_path)
+                .read()
+                .expect("read receipt_inputs_stream failed");
+            bincode::deserialize::<Vec<Vec<u8>>>(&data)
+                .expect("deserialize receipt_inputs_stream failed")
+        } else {
+            vec![]
+        };
+
+        let program = Arc::new(Program {
+            version: self.version.into(),
+            seg_size: self.seg_size,
+            elf_path: self.elf_path.clone(),
+            block_no: self.block_no,
+            block_data,
+            public_input_stream: vec![],
+            private_input_stream: vec![],
+            target_step: self.target_step.into(),
+            composite_proof: self.composite_proof,
+            proof_id: self.proof_id.clone(),
+            receipts,
+            output_stream: vec![],
+        });
+        self.program = Some(program.clone());
+        program
     }
 
     #[allow(clippy::too_many_arguments)]

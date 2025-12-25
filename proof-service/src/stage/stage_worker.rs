@@ -295,6 +295,13 @@ async fn run_stage_task(mut task: StageTask, tls_config: Option<TlsConfig>, db: 
                         if let Ok(rows_affected) = rows_affected {
                             if rows_affected == 1 {
                                 task.check_at = check_at as i64;
+                            } else {
+                                error!(
+                                    "[stage] {} failed because of duplicated stage task",
+                                    task.id
+                                );
+                                stage.is_error = true;
+                                break;
                             }
                         }
                     }

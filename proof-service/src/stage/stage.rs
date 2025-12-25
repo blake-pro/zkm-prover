@@ -1,4 +1,4 @@
-use crate::proto::includes::v1::Step;
+use crate::proto::includes::v1::{Program, Step};
 #[cfg(feature = "prover_v2")]
 use crate::stage::safe_read;
 use crate::stage::tasks::{
@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use std::{
     fmt::{Debug, Formatter},
     io::Write,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -250,7 +251,7 @@ impl Stage {
         on_task!(split_task, dst, self);
     }
 
-    fn task_with_no(&self, file_no: usize) -> ProveTask {
+    fn task_with_no(&self, file_no: usize, program: Arc<Program>) -> ProveTask {
         ProveTask {
             task_id: uuid::Uuid::new_v4().to_string(),
             program_id: self.generate_task.program_id.clone(),
@@ -261,7 +262,7 @@ impl Stage {
             file_no,
             is_deferred: false,
             segment: format!("{}/{file_no}", self.generate_task.seg_path),
-            program: self.generate_task.gen_program(),
+            program,
             // will be assigned after the root proving
             output: vec![],
             failure_count: 0,
@@ -272,11 +273,12 @@ impl Stage {
         if self.generate_task.target_step == Step::Split || self.is_tasks_gen_done {
             return;
         }
+        let program = self.generate_task.gen_program();
         // Pre-allocate 64 tasks
         if self.prove_tasks.is_empty() {
             self.prove_tasks = (0..16)
                 .into_par_iter()
-                .map(|i| self.task_with_no(i))
+                .map(|i| self.task_with_no(i, program.clone()))
                 .collect();
         }
 
@@ -293,13 +295,14 @@ impl Stage {
 
         // Generate proof tasks as needed, based on​ the number of segments.
         for file_no in self.prove_tasks.len()..file_numbers {
-            let task = self.task_with_no(file_no);
+            let task = self.task_with_no(file_no, program.clone());
             self.prove_tasks.push(task);
             tracing::debug!("insert {file_no}");
         }
     }
 
     fn gen_prove_task_post(&mut self) {
+        let program = self.generate_task.gen_program();
         // ensure all the prove tasks are generated
         {
             if self.prove_tasks.len() > self.split_task.total_segments as usize {
@@ -309,7 +312,7 @@ impl Stage {
                 let missing_tasks = (self.prove_tasks.len()
                     ..self.split_task.total_segments as usize)
                     .into_par_iter()
-                    .map(|i| self.task_with_no(i))
+                    .map(|i| self.task_with_no(i, program.clone()))
                     .collect::<Vec<_>>();
                 self.prove_tasks.extend_from_slice(&missing_tasks);
             }
@@ -339,7 +342,7 @@ impl Stage {
                     base_dir: self.generate_task.base_dir.clone(),
                     file_no,
                     is_deferred: true,
-                    program: self.generate_task.gen_program(),
+                    program: program.clone(),
                     output: safe_read(&format!("{}/{file_name}", self.generate_task.seg_path)),
                     ..Default::default()
                 };
@@ -518,40 +521,42 @@ impl Stage {
     }
 
     pub fn get_agg_task(&mut self) -> Option<AggTask> {
-        let mut result: Option<AggTask> = None;
-        for agg_task in &mut self.agg_tasks {
+        let agg_index = self.agg_tasks.iter().position(|agg_task| {
             if agg_task.childs.iter().any(|c| c.is_some()) {
                 tracing::debug!("Skipping agg_task: childs: {:?}", agg_task.childs);
+                return false;
+            }
+            agg_task.state == TASK_STATE_UNPROCESSED || agg_task.state == TASK_STATE_FAILED
+        })?;
+
+        let (left, right) = self.agg_tasks.split_at_mut(agg_index);
+        let (current, right) = right.split_first_mut()?;
+
+        current.state = TASK_STATE_PROCESSING;
+        current.trace.start_ts = get_timestamp();
+
+        for input in current.inputs.iter_mut() {
+            if !input.receipt_input.is_empty() {
                 continue;
             }
-            if agg_task.state == TASK_STATE_UNPROCESSED || agg_task.state == TASK_STATE_FAILED {
-                agg_task.state = TASK_STATE_PROCESSING;
-                agg_task.trace.start_ts = get_timestamp();
-                result = Some(agg_task.clone());
-                break;
+            if input.is_agg {
+                let child = left
+                    .iter_mut()
+                    .chain(right.iter_mut())
+                    .find(|x| x.task_id == input.computed_request_id)
+                    .unwrap();
+                input.receipt_input = std::mem::take(&mut child.output);
+            } else {
+                let child = self
+                    .prove_tasks
+                    .iter_mut()
+                    .find(|x| x.task_id == input.computed_request_id)
+                    .unwrap();
+                input.receipt_input = std::mem::take(&mut child.output);
             }
         }
-        // Fill in the inputs
-        if let Some(agg_task) = &mut result {
-            agg_task.inputs.iter_mut().for_each(|input| {
-                if input.is_agg {
-                    let tmp = self
-                        .agg_tasks
-                        .iter()
-                        .find(|x| x.task_id == input.computed_request_id)
-                        .unwrap();
-                    input.receipt_input = tmp.output.clone();
-                } else {
-                    let tmp = self
-                        .prove_tasks
-                        .iter()
-                        .find(|x| x.task_id == input.computed_request_id)
-                        .unwrap();
-                    input.receipt_input = tmp.output.clone();
-                }
-            });
-        };
-        result
+
+        Some(current.clone())
     }
 
     pub fn on_agg_task(&mut self, agg_task: &mut AggTask) {

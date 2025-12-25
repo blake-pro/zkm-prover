@@ -11,14 +11,16 @@ use crate::proto::includes::v1::Step;
 use crate::prover_node::{NodeStatus, ProverNode};
 use crate::stage::stage::get_timestamp;
 use crate::stage::tasks::{
-    AggTask, ProveTask, SingleNodeTask, SnarkTask, SplitTask, TASK_STATE_FAILED,
-    TASK_STATE_PROCESSING, TASK_STATE_SUCCESS, TASK_STATE_UNPROCESSED, TASK_TIMEOUT,
+    AggTask, ProveTask, SingleNodeTask, SnarkTask, SplitTask, PROVE_RPC_TIMEOUT_SECS,
+    TASK_STATE_FAILED, TASK_STATE_PROCESSING, TASK_STATE_SUCCESS, TASK_STATE_UNPROCESSED,
+    TASK_TIMEOUT,
 };
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use std::time::Duration;
 use tonic::transport::Channel;
+use tonic::Code;
 use tonic::Request;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -262,7 +264,7 @@ pub async fn prove(
         );
         let now = std::time::Instant::now();
         let mut grpc_request = Request::new(request);
-        grpc_request.set_timeout(Duration::from_secs(TASK_TIMEOUT));
+        grpc_request.set_timeout(Duration::from_secs(PROVE_RPC_TIMEOUT_SECS));
         let response = client.prove(grpc_request).await;
         {
             // Decrease the current prover number.
@@ -275,30 +277,44 @@ pub async fn prove(
             *count -= 1;
         }
         let mut status = node_status.lock().unwrap();
-        if let Ok(response) = response {
-            *status = NodeStatus::Idle;
-            if let Some(response_result) = response.get_ref().result.as_ref() {
-                prove_task.state = result_code_to_state(response_result.code);
-                prove_task.trace.node_info = addrs.clone();
-                tracing::info!(
-                    "[prove] rpc {} {}:{}:{} code:{:?} message:{:?} end, elapsed {:?}",
-                    addrs,
-                    response.get_ref().proof_id,
-                    response.get_ref().computed_request_id,
-                    prove_task.file_no,
-                    response_result.code,
-                    response_result.message,
-                    now.elapsed(),
-                );
-                prove_task.output = response.get_ref().output_receipt.clone();
-                return Some(prove_task);
+        match response {
+            Ok(response) => {
+                *status = NodeStatus::Idle;
+                if let Some(response_result) = response.get_ref().result.as_ref() {
+                    prove_task.state = result_code_to_state(response_result.code);
+                    prove_task.trace.node_info = addrs.clone();
+                    tracing::info!(
+                        "[prove] rpc {} {}:{}:{} code:{:?} message:{:?} end, elapsed {:?}",
+                        addrs,
+                        response.get_ref().proof_id,
+                        response.get_ref().computed_request_id,
+                        prove_task.file_no,
+                        response_result.code,
+                        response_result.message,
+                        now.elapsed(),
+                    );
+                    prove_task.output = response.get_ref().output_receipt.clone();
+                    return Some(prove_task);
+                }
             }
-        } else {
-            *status = NodeStatus::OffLine(get_timestamp());
-            tracing::warn!(
-                "Node {} is unreachable, marked Offline to avoid reuse",
-                addrs
-            );
+            Err(status_err) => {
+                *status = NodeStatus::OffLine(get_timestamp());
+                if status_err.code() == Code::DeadlineExceeded {
+                    prove_task.state = TASK_STATE_FAILED;
+                    tracing::warn!(
+                        "[prove] rpc {} {}:{}:{} timeout, mark failed",
+                        addrs,
+                        prove_task.proof_id,
+                        prove_task.task_id,
+                        prove_task.file_no
+                    );
+                } else {
+                    tracing::warn!(
+                        "Node {} is unreachable, marked Offline to avoid reuse",
+                        addrs
+                    );
+                }
+            }
         }
     }
     // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -360,7 +376,7 @@ pub async fn aggregate(
         );
         let now = std::time::Instant::now();
         let mut grpc_request = Request::new(request);
-        grpc_request.set_timeout(Duration::from_secs(TASK_TIMEOUT));
+        grpc_request.set_timeout(Duration::from_secs(PROVE_RPC_TIMEOUT_SECS));
         let response = client.aggregate(grpc_request).await;
         {
             // Decrease the current prover number.
@@ -373,30 +389,43 @@ pub async fn aggregate(
             *count -= 1;
         }
         let mut status = node_status.lock().unwrap();
-        if let Ok(response) = response {
-            *status = NodeStatus::Idle;
-            if let Some(response_result) = response.get_ref().result.as_ref() {
-                agg_task.state = result_code_to_state(response_result.code);
-                agg_task.trace.node_info = addrs.clone();
-                tracing::info!(
-                    "[aggregate] rpc {} {}:{}:{} code:{:?} message:{:?} end, elapsed {:?}",
-                    addrs,
-                    response.get_ref().proof_id,
-                    response.get_ref().computed_request_id,
-                    agg_task.agg_index,
-                    response_result.code,
-                    response_result.message,
-                    now.elapsed(),
-                );
-                agg_task.output = response.get_ref().agg_receipt.clone();
-                return Some(agg_task);
+        match response {
+            Ok(response) => {
+                *status = NodeStatus::Idle;
+                if let Some(response_result) = response.get_ref().result.as_ref() {
+                    agg_task.state = result_code_to_state(response_result.code);
+                    agg_task.trace.node_info = addrs.clone();
+                    tracing::info!(
+                        "[aggregate] rpc {} {}:{}:{} code:{:?} message:{:?} end, elapsed {:?}",
+                        addrs,
+                        response.get_ref().proof_id,
+                        response.get_ref().computed_request_id,
+                        agg_task.agg_index,
+                        response_result.code,
+                        response_result.message,
+                        now.elapsed(),
+                    );
+                    agg_task.output = response.get_ref().agg_receipt.clone();
+                    return Some(agg_task);
+                }
             }
-        } else {
-            *status = NodeStatus::OffLine(get_timestamp());
-            tracing::warn!(
-                "Node {} is unreachable, marked Offline to avoid reuse",
-                addrs
-            );
+            Err(status_err) => {
+                *status = NodeStatus::OffLine(get_timestamp());
+                if status_err.code() == Code::DeadlineExceeded {
+                    agg_task.state = TASK_STATE_FAILED;
+                    tracing::warn!(
+                        "[aggregate] rpc {} {}:{} timeout, mark failed",
+                        addrs,
+                        agg_task.proof_id,
+                        agg_task.task_id
+                    );
+                } else {
+                    tracing::warn!(
+                        "Node {} is unreachable, marked Offline to avoid reuse",
+                        addrs
+                    );
+                }
+            }
         }
     }
     // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
