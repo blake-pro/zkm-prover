@@ -121,7 +121,7 @@ impl SingleNodeProver {
         let public_values_stream = public_values.to_vec();
         // write public values to file
         let public_values_path = format!("{}/wrap/public_values.bin", ctx.base_dir);
-        file::new(&public_values_path).write_all(&public_values_stream)?;
+        file::new(&public_values_path).write(&public_values_stream)?;
 
         Ok((cycles, serde_json::to_string(&proof)?.into_bytes()))
     }
