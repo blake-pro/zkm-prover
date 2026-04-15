@@ -9,7 +9,9 @@ use zkm_recursion_circuit::machine::{
 use zkm_recursion_compiler::config::InnerConfig;
 use zkm_recursion_core::Runtime;
 use zkm_sdk::ZKMProof;
-use zkm_stark::{Challenge, MachineProver, StarkGenericConfig, Val, ZKMCoreOpts};
+use zkm_stark::{
+    Challenge, MachineProver, MachineProvingKey, StarkGenericConfig, Val, ZKMCoreOpts,
+};
 
 #[derive(Default)]
 pub struct AggProver {}
