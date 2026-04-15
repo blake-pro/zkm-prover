@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tonic::{Request, Response, Status};
 
-use crate::proto::includes::v1::ProverVersion;
 use crate::proto::prover_service::v1::{
     prover_service_server::ProverService, AggregateRequest, AggregateResponse, GetStatusRequest,
     GetStatusResponse, GetTaskResultRequest, GetTaskResultResponse, ProveRequest, ProveResponse,
@@ -10,13 +9,6 @@ use crate::proto::prover_service::v1::{
     SnarkProofResponse, SplitElfRequest, SplitElfResponse,
 };
 use crate::{config, metrics};
-#[cfg(feature = "prover")]
-use prover::{
-    contexts::{AggContext, ProveContext, SnarkContext},
-    executor::SplitContext,
-    pipeline::Pipeline,
-};
-#[cfg(feature = "prover_v2")]
 use prover_v2::{
     contexts::{AggContext, ProveContext, SingleNodeContext, SnarkContext, SplitContext},
     pipeline::Pipeline,
@@ -53,23 +45,15 @@ async fn run_back_task<
 
 #[derive(Default)]
 pub struct ProverServiceSVC {
-    pub config: config::RuntimeConfig,
     pipeline: Arc<Pipeline>,
 }
 impl ProverServiceSVC {
     pub fn new(config: config::RuntimeConfig) -> Self {
-        let version = if cfg!(feature = "prover") {
-            ProverVersion::Zkm
-        } else if cfg!(feature = "prover_v2") {
-            ProverVersion::Zkm2
-        } else {
-            panic!("Not supported prover version");
-        };
         let pipeline = Arc::new(Pipeline::new(
             &config.base_dir,
-            &config.get_proving_key_path(version.into()),
+            &config.get_proving_key_path(),
         ));
-        Self { config, pipeline }
+        Self { pipeline }
     }
 }
 
@@ -195,14 +179,6 @@ impl ProverService for ProverServiceSVC {
                 //request.get_ref().seg_path,
             );
             let start = Instant::now();
-            #[cfg(feature = "prover")]
-            let prove_context = ProveContext::new(
-                request.get_ref().block_no,
-                request.get_ref().seg_size,
-                &request.get_ref().segment,
-                &request.get_ref().receipts_input,
-            );
-            #[cfg(feature = "prover_v2")]
             let prove_context = ProveContext {
                 proof_id: request.get_ref().proof_id.clone(),
                 program_id: request.get_ref().program_id.clone(),
@@ -252,19 +228,6 @@ impl ProverService for ProverServiceSVC {
                 request.get_ref().inputs.len()
             );
             let start = Instant::now();
-            #[cfg(feature = "prover")]
-            let agg_context = {
-                let inputs = request.get_ref().inputs.clone();
-                AggContext::new(
-                    request.get_ref().seg_size,
-                    &inputs[0].receipt_input,
-                    &inputs[1].receipt_input,
-                    inputs[0].is_agg,
-                    inputs[1].is_agg,
-                    request.get_ref().is_final,
-                )
-            };
-            #[cfg(feature = "prover_v2")]
             let agg_context = AggContext {
                 vk: request.get_ref().vk.clone(),
                 proofs: request
@@ -355,7 +318,6 @@ impl ProverService for ProverServiceSVC {
         .await
     }
 
-    #[cfg(feature = "prover_v2")]
     async fn single_node(
         &self,
         request: Request<SingleNodeRequest>,
@@ -410,15 +372,5 @@ impl ProverService for ProverServiceSVC {
             Ok(Response::new(response))
         })
         .await
-    }
-
-    #[cfg(feature = "prover")]
-    async fn single_node(
-        &self,
-        _request: Request<SingleNodeRequest>,
-    ) -> tonic::Result<Response<SingleNodeResponse>, Status> {
-        Err(Status::unimplemented(
-            "single_node is not supported in zkm feature",
-        ))
     }
 }

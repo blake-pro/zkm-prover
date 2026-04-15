@@ -103,10 +103,6 @@ base_dir = "/tmp/zkm/test_proof"
 proving_key_paths = ["/tmp/zkm/proving.key"]
 ```
 
-Refer to sample [sha2](https://github.com/ProjectZKM/zkm/blob/main/recursion/src/lib.rs#L165) to generate the proving
-key
-and verifying key.
-
 Start
 
 ```

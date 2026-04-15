@@ -3,7 +3,7 @@ use crate::{get_prover, NetworkProve, Segment, KEY_CACHE, PROGRAM_CACHE};
 use common::file;
 use zkm_core_machine::utils::trace_checkpoint;
 use zkm_prover::CoreSC;
-use zkm_stark::{MachineProver, MachineProvingKey, StarkGenericConfig};
+use zkm_stark::{MachineProver, StarkGenericConfig};
 
 #[derive(Default)]
 pub struct RootProver {}
@@ -100,7 +100,7 @@ impl RootProver {
             std::slice::from_mut(&mut record),
             &opts,
             None,
-        );
+        )?;
         tracing::info!("generate dependencies time: {:?}", now.elapsed());
 
         // Fix the shape of the record.

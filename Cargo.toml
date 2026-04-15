@@ -1,22 +1,8 @@
 [workspace]
 members = [
-    "prover",
     "common",
     "proof-service",
     "prover_v2",
 ]
 
 resolver = "2"
-
-[patch."https://github.com/zkMIPS/plonky2.git"]
-plonky2 = { git = "https://github.com/ProjectZKM/plonky2.git", branch = "zkm_dev" }
-plonky2_field = { git = "https://github.com/ProjectZKM/plonky2.git", branch = "zkm_dev" }
-plonky2_util = { git = "https://github.com/ProjectZKM/plonky2.git", branch = "zkm_dev" }
-plonky2_maybe_rayon = { git = "https://github.com/ProjectZKM/plonky2.git", branch = "zkm_dev" }
-
-[patch."https://github.com/zkMIPS/succinctx.git"]
-plonky2x = { git = "https://github.com/ProjectZKM/succinctx.git", branch = "zkm" }
-plonky2x-derive = { git = "https://github.com/ProjectZKM/succinctx.git", branch = "zkm" }
-
-[patch."https://github.com/zkMIPS/curta.git"]
-curta = { git = "https://github.com/ProjectZKM/curta.git", branch = "zkm" }

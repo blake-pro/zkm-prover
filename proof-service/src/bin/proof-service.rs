@@ -71,12 +71,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .serve(addr)
     } else {
-        #[cfg(all(feature = "prover", feature = "gpu"))]
-        {
-            plonky2::create_ctx(13, 13);
-            plonky2::init_globalmem(134217728);
-            prover::init_stark_op_stream_simple();
-        }
         let prover = ProverServiceSVC::new(runtime_config.clone());
         server
             .add_service(
@@ -126,11 +120,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = grpc_server => res?,
         res = metrics_server => res?,
         // res = file_server => res?,
-    }
-
-    #[cfg(all(feature = "prover", feature = "gpu"))]
-    if !args.stage {
-        plonky2::destroy_ctx();
     }
 
     Ok(())

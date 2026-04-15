@@ -8,11 +8,11 @@ First, you should set these variables according to your environment.
 
 - provers
 - stage
-- proving_key_paths = ["/mnt/data/zkm/proving.key", "/mnt/data/zkm2/proving.key"]
+- proving_key_paths = ["/mnt/data/zkm2/proving.key"]
 - tls
 - base_dir
 
-Notice that the proving_key_paths should be aligned with [`ProverVersion`](../../proto/src/include/v1/include.proto), each prover version is used to index its proving key download URL.
+Notice that the `proving_key_paths` list now contains only the `prover_v2` proving key path.
 
 Then you can run this script in below way.
 

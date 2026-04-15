@@ -1,4 +1,3 @@
-use crate::proto::includes::v1::ProverVersion;
 use common::file;
 use serde_derive::Deserialize;
 use tracing_forest::ForestLayer;
@@ -48,12 +47,8 @@ impl RuntimeConfig {
         Ok(toml::from_str(&contents)?)
     }
 
-    pub fn get_proving_key_path(&self, version: i32) -> String {
-        match ProverVersion::from_i32(version) {
-            Some(ProverVersion::Zkm) => self.proving_key_paths[0].clone(),
-            Some(ProverVersion::Zkm2) => self.proving_key_paths[1].clone(),
-            None => unimplemented!("Invalid prover version found: {}", version),
-        }
+    pub fn get_proving_key_path(&self) -> String {
+        self.proving_key_paths.first().cloned().unwrap_or_default()
     }
 }
 

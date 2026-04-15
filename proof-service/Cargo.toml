@@ -6,10 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-prover = { path = "../prover", optional = true }
-prover_v2 = { path = "../prover_v2", optional = true }
-
-plonky2 = { git = "https://github.com/ProjectZKM/plonky2.git", branch = "zkm_dev", optional = true }
+prover_v2 = { path = "../prover_v2" }
 
 common = { path = "../common" }
 
@@ -50,8 +47,4 @@ tonic-build = "0.8.0"
 
 [features]
 default = []
-prover = ["dep:prover"]
-prover_v2 = ["dep:prover_v2"]
-
-gpu = ["dep:plonky2", "prover/gpu"]
-prover_v2_gpu = ["dep:prover_v2", "prover_v2/gpu"]
+gpu = ["prover_v2/gpu"]
