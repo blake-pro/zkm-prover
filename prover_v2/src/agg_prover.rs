@@ -9,6 +9,7 @@ use zkm_recursion_circuit::machine::{
 use zkm_recursion_compiler::config::InnerConfig;
 use zkm_recursion_core::Runtime;
 use zkm_sdk::ZKMProof;
+#[allow(unused_imports)]
 use zkm_stark::{
     Challenge, MachineProver, MachineProvingKey, StarkGenericConfig, Val, ZKMCoreOpts,
 };

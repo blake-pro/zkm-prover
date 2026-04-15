@@ -4,10 +4,6 @@ package prover.v1;
 
 import "include/v1/includes.proto";
 
-message Version {
-  string v0_0_1 = 1;
-}
-
 // timestamps are represented in unix time in seconds
 
 enum ResultCode {
@@ -24,8 +20,6 @@ message Result {
 }
 
 service ProverService {
-  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {}
-  rpc GetTaskResult(GetTaskResultRequest) returns (GetTaskResultResponse) {}
   rpc SplitElf(SplitElfRequest) returns (SplitElfResponse) {}
   rpc Prove(ProveRequest) returns (ProveResponse) {}
   rpc Aggregate(AggregateRequest) returns (AggregateResponse) {}
@@ -33,48 +27,14 @@ service ProverService {
   rpc SingleNode(SingleNodeRequest) returns (SingleNodeResponse) {}
 }
 
-message GetStatusRequest {}
-
-message GetStatusResponse {
-  enum Status {
-    STATUS_UNSPECIFIED = 0;
-    STATUS_BOOTING = 1;
-    STATUS_COMPUTING = 2;
-    STATUS_IDLE = 3;
-    STATUS_HALT = 4;
-  }
-  Status status = 1;
-  string prover_name = 2;
-  string prover_id = 3;
-  uint64 number_of_cores = 4;
-  uint64 total_memory = 5;
-  uint64 free_memory = 6;
-}
-
-message GetTaskResultRequest {
-  string proof_id = 1;
-  // uuid
-  string computed_request_id = 2;
-}
-
-message GetTaskResultResponse {
-  string proof_id = 1;
-  string computed_request_id = 2;
-  Result result = 3;
-}
-
 message SplitElfRequest {
   string proof_id = 1;
   string computed_request_id = 2;
   string base_dir = 3;
-  string seg_path = 5;
   string elf_path = 4;
-  optional uint64 block_no = 6;
+  string seg_path = 5;
   uint32 seg_size = 7;
-  string args = 8;
-  string public_input_path = 9;
   string private_input_path = 10;
-  string output_path = 11;
   string receipt_inputs_path = 12;
   string program_id = 13;
 }
@@ -92,11 +52,8 @@ message ProveRequest {
   string computed_request_id = 2;
   string program_id = 3;
   string segment = 4;
-  //  bytes segment = 4;
-  optional uint64 block_no = 5;
   uint32 seg_size = 6;
   string elf_path = 7;
-  repeated bytes receipts_input = 8;
   uint32 index = 9;
 }
 
@@ -110,17 +67,12 @@ message ProveResponse {
 message AggregateRequest {
   string proof_id = 1;
   string computed_request_id = 2;
-  //string seg_path = 4;
-  optional uint64 block_no = 5;
-  uint32 seg_size = 6;
   bytes vk = 7;
   repeated includes.v1.AggregateInput inputs = 8;
   bool is_final = 9;
   bool is_first_shard = 10;
   bool is_leaf_layer = 11;
   bool is_deferred = 12;
-  //bytes agg_receipt = 9;
-  // string output_dir = 12;
 }
 
 message AggregateResponse {
@@ -133,7 +85,6 @@ message AggregateResponse {
 message SnarkProofRequest {
   string proof_id = 1;
   string computed_request_id = 2;
-  includes.v1.ProverVersion version = 3;
   bytes agg_receipt = 4;
   bool from_input = 5; // if true, the agg_receipt is from input, otherwise it is from agg output
 }

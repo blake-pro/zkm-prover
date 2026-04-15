@@ -97,8 +97,6 @@ impl Executor {
             context,
             prover.core_shape_config.as_ref(),
         )?;
-        // write public_values_stream
-        // file::new(&ctx.output_path).write(&public_values_stream)?;
         let public_values_path = format!("{}/wrap/public_values.bin", ctx.base_dir);
         file::new(&public_values_path).write(&public_values_stream)?;
 
@@ -377,7 +375,6 @@ impl Executor {
             }
             // Wait until the checkpoint generator handle has fully finished.
             let public_values_stream = checkpoint_generator_handle.join().unwrap().unwrap();
-            // file::new(&ctx.public_input_path).write(&public_values_stream)?;                    // write public_values_stream
 
             // Wait until the records and traces have been fully generated for phase 2.
             p2_record_and_trace_gen_handles

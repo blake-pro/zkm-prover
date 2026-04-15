@@ -220,18 +220,11 @@ impl Stage {
             .seg_path
             .clone_from(&self.generate_task.seg_path);
         self.split_task
-            .public_input_path
-            .clone_from(&self.generate_task.public_input_path);
-        self.split_task
             .private_input_path
             .clone_from(&self.generate_task.private_input_path);
         self.split_task
             .recepit_inputs_path
             .clone_from(&self.generate_task.receipt_inputs_path);
-        self.split_task
-            .output_path
-            .clone_from(&self.generate_task.output_stream_path);
-        self.split_task.block_no = self.generate_task.block_no;
         self.split_task.seg_size = self.generate_task.seg_size;
 
         self.split_task.task_id = uuid::Uuid::new_v4().to_string();
@@ -532,12 +525,6 @@ impl Stage {
         self.snark_task
             .proof_id
             .clone_from(&self.generate_task.proof_id.clone());
-        self.snark_task
-            .input_dir
-            .clone_from(&self.generate_task.agg_path);
-        self.snark_task
-            .output_path
-            .clone_from(&self.generate_task.snark_path);
         self.snark_task.task_id = uuid::Uuid::new_v4().to_string();
         self.snark_task.state = TASK_STATE_UNPROCESSED;
         // fill in the input receipts

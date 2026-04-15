@@ -1,7 +1,7 @@
 use crate::proto::includes::v1::{Program, ProverVersion, Step};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-//use zkm_emulator::utils::get_block_path;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GenerateTask {
     pub program_id: String,
@@ -13,9 +13,7 @@ pub struct GenerateTask {
     pub prove_path: String,
     pub agg_path: String,
     pub snark_path: String,
-    pub public_input_path: String,
     pub private_input_path: String,
-    pub output_stream_path: String,
     pub block_no: Option<u64>,
     pub seg_size: u32,
     pub max_prover_num: u32,
@@ -25,7 +23,6 @@ pub struct GenerateTask {
     /// Control whether to execute the aggregation phase; skip Agg when set to true.
     pub composite_proof: bool,
     pub receipt_inputs_path: String,
-    pub receipts_path: String,
     #[serde(skip_serializing, skip_deserializing)]
     pub program: Option<Arc<Program>>,
 }
@@ -38,9 +35,6 @@ impl GenerateTask {
         }
 
         let block_data = if let Some(block_no) = self.block_no {
-            //let block_path = get_block_path(&self.base_dir, &block_no.to_string(), "");
-            //read_block_data(block_no, &block_path)
-            // FIXME
             if block_no > 0 {
                 todo!()
             } else {
@@ -89,9 +83,7 @@ impl GenerateTask {
         prove_path: &str,
         agg_path: &str,
         snark_path: &str,
-        public_input_path: &str,
         private_input_path: &str,
-        output_stream_path: &str,
         block_no: Option<u64>,
         seg_size: u32,
         max_prover_num: u32,
@@ -100,7 +92,6 @@ impl GenerateTask {
         single_node: bool,
         composite_proof: bool,
         receipt_inputs_path: &str,
-        receipts_path: &str,
     ) -> Self {
         GenerateTask {
             program_id,
@@ -112,9 +103,7 @@ impl GenerateTask {
             prove_path: prove_path.to_string(),
             agg_path: agg_path.to_string(),
             snark_path: snark_path.to_string(),
-            public_input_path: public_input_path.to_string(),
             private_input_path: private_input_path.to_string(),
-            output_stream_path: output_stream_path.to_string(),
             block_no,
             seg_size,
             max_prover_num,
@@ -123,7 +112,6 @@ impl GenerateTask {
             single_node,
             composite_proof,
             receipt_inputs_path: receipt_inputs_path.to_string(),
-            receipts_path: receipts_path.to_string(),
             program: None,
         }
     }

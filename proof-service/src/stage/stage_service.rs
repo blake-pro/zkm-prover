@@ -103,22 +103,13 @@ impl StageService for StageServiceSVC {
                         Ok(context) => {
                             if task.status
                                 == crate::proto::stage_service::v1::Status::Success as i32
-                                && !context.output_stream_path.is_empty()
+                                && context.composite_proof
                             {
-                                let output_data =
-                                    file::new(&context.output_stream_path).read().unwrap();
-                                response.output_stream.clone_from(&output_data);
-                                if context.composite_proof {
-                                    let receipts_path = format!("{}/receipt/0", context.prove_path);
-                                    let receipts_data = file::new(&receipts_path).read().unwrap();
-                                    response.receipt = receipts_data;
-                                }
+                                let receipts_path = format!("{}/receipt/0", context.prove_path);
+                                let receipts_data = file::new(&receipts_path).read().unwrap();
+                                response.receipt = receipts_data;
                             }
-                            (
-                                context.target_step,
-                                context.composite_proof,
-                                context.snark_path,
-                            )
+                            (context.target_step, context.composite_proof, context.snark_path)
                         }
                         Err(_) => (Step::Snark, false, "".into()),
                     }
@@ -340,16 +331,6 @@ impl StageService for StageServiceSVC {
             file::new(&input_stream_dir)
                 .create_dir_all()
                 .map_err(|e| Status::internal(e.to_string()))?;
-            let public_input_stream_path = if request.get_ref().public_input_stream.is_empty() {
-                "".to_string()
-            } else {
-                let public_input_stream_path = format!("{}/{}", input_stream_dir, "public_input");
-                file::new(&public_input_stream_path)
-                    .write(&request.get_ref().public_input_stream)
-                    .map_err(|e| Status::internal(e.to_string()))?;
-                public_input_stream_path
-            };
-
             let private_input_stream_path = if request.get_ref().private_input_stream.is_empty() {
                 "".to_string()
             } else {
@@ -393,20 +374,6 @@ impl StageService for StageServiceSVC {
                     .map_err(|e| Status::internal(e.to_string()))?;
                 receipt_inputs_path
             };
-
-            let receipts_path = if request.get_ref().receipts.is_empty() {
-                "".to_string()
-            } else {
-                let receipts_path = format!("{}/{}", input_stream_dir, "receipts");
-                let mut buf = Vec::new();
-                bincode::serialize_into(&mut buf, &request.get_ref().receipts)
-                    .expect("serialization failed");
-                file::new(&receipts_path)
-                    .write(&buf)
-                    .map_err(|e| Status::internal(e.to_string()))?;
-                receipts_path
-            };
-            let output_stream_path = String::new();
 
             let seg_path = format!("{}/segment", dir_path);
             file::new(&seg_path)
@@ -453,9 +420,7 @@ impl StageService for StageServiceSVC {
                 &prove_path,
                 &agg_path,
                 &snark_path,
-                &public_input_stream_path,
                 &private_input_stream_path,
-                &output_stream_path,
                 Some(block_no),
                 request.get_ref().seg_size,
                 max_prover_num,
@@ -464,7 +429,6 @@ impl StageService for StageServiceSVC {
                 single_node,
                 request.get_ref().composite_proof,
                 &receipt_inputs_path,
-                &receipts_path,
             );
 
             let context = serde_json::to_string(&generate_task).map_err(|e| {

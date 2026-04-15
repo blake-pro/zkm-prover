@@ -1,7 +1,6 @@
 use crate::proto::prover_service::v1::{
-    prover_service_client::ProverServiceClient, AggregateRequest, GetTaskResultRequest,
-    GetTaskResultResponse, ProveRequest, ResultCode, SingleNodeRequest, SnarkProofRequest,
-    SplitElfRequest,
+    prover_service_client::ProverServiceClient, AggregateRequest, ProveRequest, ResultCode,
+    SingleNodeRequest, SnarkProofRequest, SplitElfRequest,
 };
 use common::tls::Config as TlsConfig;
 use std::sync::{Arc, Mutex};
@@ -143,11 +142,7 @@ pub async fn split(
             elf_path: split_task.elf_path.clone(),
             base_dir: split_task.base_dir.clone(),
             seg_path: split_task.seg_path.clone(),
-            public_input_path: split_task.public_input_path.clone(),
             private_input_path: split_task.private_input_path.clone(),
-            output_path: split_task.output_path.clone(),
-            args: split_task.args.clone(),
-            block_no: split_task.block_no,
             seg_size: split_task.seg_size,
             receipt_inputs_path: split_task.recepit_inputs_path.clone(),
             program_id: split_task.program_id.clone(),
@@ -249,10 +244,8 @@ pub async fn prove(
             computed_request_id: prove_task.task_id.clone(),
             program_id: prove_task.program_id.clone(),
             segment: prove_task.segment.clone(),
-            block_no: prove_task.program.block_no,
             seg_size: prove_task.program.seg_size,
             elf_path: prove_task.program.elf_path.clone(),
-            receipts_input: prove_task.program.receipts.clone(),
             index: prove_task.file_no as u32,
         };
         tracing::info!(
@@ -357,8 +350,6 @@ pub async fn aggregate(
         let request = AggregateRequest {
             proof_id: agg_task.proof_id.clone(),
             computed_request_id: agg_task.task_id.clone(),
-            block_no: agg_task.block_no,
-            seg_size: agg_task.seg_size,
             vk: agg_task.vk.clone(),
             inputs: agg_task.inputs.clone(),
             is_final: agg_task.is_final,
@@ -464,7 +455,6 @@ pub async fn snark_proof(
             *count += 1;
         }
         let request = SnarkProofRequest {
-            version: snark_task.version,
             proof_id: snark_task.proof_id.clone(),
             computed_request_id: snark_task.task_id.clone(),
             agg_receipt: snark_task.agg_receipt.clone(),
@@ -593,43 +583,4 @@ pub async fn single_node(
     }
 
     Ok(single_node_task)
-}
-
-#[allow(dead_code)]
-pub async fn get_task_status(
-    client: &mut ProverServiceClient<Channel>,
-    proof_id: &str,
-    task_id: &str,
-) -> Option<ResultCode> {
-    let request = GetTaskResultRequest {
-        proof_id: proof_id.to_owned(),
-        computed_request_id: task_id.to_owned(),
-    };
-    let mut grpc_request = Request::new(request);
-    grpc_request.set_timeout(Duration::from_secs(TASK_TIMEOUT));
-    let response = client.get_task_result(grpc_request).await;
-    if let Ok(response) = response {
-        if let Some(response_result) = response.get_ref().result.as_ref() {
-            return ResultCode::from_i32(response_result.code);
-        }
-    }
-    Some(ResultCode::Unspecified)
-}
-
-pub async fn get_task_result(
-    client: &mut ProverServiceClient<Channel>,
-    proof_id: &str,
-    task_id: &str,
-) -> Option<GetTaskResultResponse> {
-    let request = GetTaskResultRequest {
-        proof_id: proof_id.to_owned(),
-        computed_request_id: task_id.to_owned(),
-    };
-    let mut grpc_request = Request::new(request);
-    grpc_request.set_timeout(Duration::from_secs(30));
-    let response = client.get_task_result(grpc_request).await;
-    if let Ok(response) = response {
-        return Some(response.into_inner());
-    }
-    None
 }

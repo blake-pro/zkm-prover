@@ -3,10 +3,9 @@ use std::time::Instant;
 use tonic::{Request, Response, Status};
 
 use crate::proto::prover_service::v1::{
-    prover_service_server::ProverService, AggregateRequest, AggregateResponse, GetStatusRequest,
-    GetStatusResponse, GetTaskResultRequest, GetTaskResultResponse, ProveRequest, ProveResponse,
-    Result, ResultCode, SingleNodeRequest, SingleNodeResponse, SnarkProofRequest,
-    SnarkProofResponse, SplitElfRequest, SplitElfResponse,
+    prover_service_server::ProverService, AggregateRequest, AggregateResponse, ProveRequest,
+    ProveResponse, Result, ResultCode, SingleNodeRequest, SingleNodeResponse,
+    SnarkProofRequest, SnarkProofResponse, SplitElfRequest, SplitElfResponse,
 };
 use crate::{config, metrics};
 use prover_v2::{
@@ -85,30 +84,6 @@ macro_rules! on_done {
 
 #[tonic::async_trait]
 impl ProverService for ProverServiceSVC {
-    async fn get_status(
-        &self,
-        _request: Request<GetStatusRequest>,
-    ) -> tonic::Result<Response<GetStatusResponse>, Status> {
-        metrics::record_metrics("prover::get_status", || async {
-            // tracing::info!("{:#?}", request);
-            let response = GetStatusResponse::default();
-            Ok(Response::new(response))
-        })
-        .await
-    }
-
-    async fn get_task_result(
-        &self,
-        _request: Request<GetTaskResultRequest>,
-    ) -> tonic::Result<Response<GetTaskResultResponse>, Status> {
-        metrics::record_metrics("prover::get_task_result", || async {
-            // tracing::info!("{:#?}", request);
-            let response = GetTaskResultResponse::default();
-            Ok(Response::new(response))
-        })
-        .await
-    }
-
     async fn split_elf(
         &self,
         request: Request<SplitElfRequest>,
@@ -124,13 +99,9 @@ impl ProverService for ProverServiceSVC {
                 &request.get_ref().base_dir,
                 &request.get_ref().program_id,
                 &request.get_ref().elf_path,
-                request.get_ref().block_no,
                 request.get_ref().seg_size,
                 &request.get_ref().seg_path,
-                &request.get_ref().public_input_path,
                 &request.get_ref().private_input_path,
-                &request.get_ref().output_path,
-                &request.get_ref().args,
                 &request.get_ref().receipt_inputs_path,
             );
 
@@ -283,9 +254,7 @@ impl ProverService for ProverServiceSVC {
             let start = Instant::now();
 
             let snark_context = SnarkContext {
-                version: request.get_ref().version,
                 proof_id: request.get_ref().proof_id.clone(),
-                // proving_key_path: self.config.get_proving_key_path(request.get_ref().version),
                 agg_receipt: request.get_ref().agg_receipt.clone(),
                 from_input: request.get_ref().from_input,
             };

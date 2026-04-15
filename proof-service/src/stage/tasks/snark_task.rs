@@ -7,10 +7,6 @@ pub struct SnarkTask {
     pub task_id: String,
     pub state: u32,
     pub proof_id: String,
-    pub version: i32,
-
-    pub input_dir: String,
-    pub output_path: String,
 
     #[serde(skip_serializing, skip_deserializing)]
     pub agg_receipt: Vec<u8>,
