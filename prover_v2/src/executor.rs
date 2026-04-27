@@ -7,7 +7,7 @@ use std::sync::{
     {Arc, Mutex},
 };
 use std::thread::ScopedJoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use p3_maybe_rayon::prelude::*;
 use zkm_core_executor::{
@@ -31,6 +31,9 @@ use crate::{
     get_prover, NetworkProve, ProverComponents, Segment, StateWithPublicValues,
     FIRST_LAYER_BATCH_SIZE, KEY_CACHE, PROGRAM_CACHE,
 };
+
+const TRACE_CHECKPOINT_RECORD_THRESHOLD_MS_ENV: &str = "TRACE_CHECKPOINT_RECORD_THRESHOLD_MS";
+const DEFAULT_TRACE_CHECKPOINT_RECORD_THRESHOLD_MS: u64 = 2_000;
 
 #[derive(Default)]
 pub struct Executor {}
@@ -210,11 +213,11 @@ impl Executor {
                             let received = { checkpoints_rx.lock().unwrap().recv() };
                             if let Ok((index, mut checkpoint, done)) = received {
                                 // Trace the checkpoint and reconstruct the execution records.
-                                let now = Instant::now();
                                 let mut reader = std::io::BufReader::new(&checkpoint);
                                 let exe_state: ExecutionState =
                                     bincode::deserialize_from(&mut reader)
                                         .expect("failed to deserialize state");
+                                let trace_checkpoint_start = Instant::now();
                                 let (mut records, report) =
                                     tracing::debug_span!("trace checkpoint").in_scope(|| {
                                         trace_checkpoint::<CoreSC>(
@@ -224,10 +227,11 @@ impl Executor {
                                             shape_config,
                                         )
                                     });
+                                let trace_checkpoint_elapsed = trace_checkpoint_start.elapsed();
                                 tracing::info!(
                                     "generated {} records in {:?}",
                                     records.len(),
-                                    now.elapsed()
+                                    trace_checkpoint_elapsed
                                 );
                                 debug_assert_eq!(records.len(), 1);
                                 *report_aggregate.lock().unwrap() += report;
@@ -259,6 +263,8 @@ impl Executor {
                                 for record in records.iter_mut() {
                                     deferred.append(&mut record.defer());
                                 }
+                                let use_record_segment =
+                                    should_write_record_segment(trace_checkpoint_elapsed);
 
                                 // See if any deferred shards are ready to be committed to.
                                 let mut deferred = deferred.split(done, None, opts.split_opts);
@@ -296,14 +302,19 @@ impl Executor {
                                 // Let another worker update the state.
                                 record_gen_sync.advance_turn();
 
-                                let segments: Vec<_> = std::iter::once(Segment::State(Box::new(
-                                    StateWithPublicValues {
+                                let ordinary_segment = if use_record_segment {
+                                    Segment::Record(Box::new(records[0].clone()))
+                                } else {
+                                    Segment::State(Box::new(StateWithPublicValues {
                                         state: exe_state,
                                         public_values: records[0].public_values,
-                                    },
-                                )))
-                                .chain(deferred.into_iter().map(|r| Segment::Record(Box::new(r))))
-                                .collect();
+                                    }))
+                                };
+                                let segments: Vec<_> = std::iter::once(ordinary_segment)
+                                    .chain(
+                                        deferred.into_iter().map(|r| Segment::Record(Box::new(r))),
+                                    )
+                                    .collect();
 
                                 segments.par_iter().enumerate().for_each(|(i, segment)| {
                                     let now = Instant::now();
@@ -440,4 +451,19 @@ fn write_file(path: String, buf: &[u8]) -> anyhow::Result<()> {
     std::fs::rename(tmp_path, path)?;
 
     Ok(())
+}
+
+fn trace_checkpoint_record_threshold_from_env() -> Duration {
+    let millis = std::env::var(TRACE_CHECKPOINT_RECORD_THRESHOLD_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_TRACE_CHECKPOINT_RECORD_THRESHOLD_MS);
+
+    Duration::from_millis(millis)
+}
+
+fn should_write_record_segment(elapsed: Duration) -> bool {
+    let threshold = trace_checkpoint_record_threshold_from_env();
+
+    elapsed > threshold
 }
